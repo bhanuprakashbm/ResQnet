@@ -1,0 +1,48 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Function to validate emergency report data
+    function isValidEmergencyReport() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['name', 'emergencyType', 'description', 'contactNumber', 'coordinates', 'timestamp'])
+        && data.name is string && data.name.size() > 0
+        && data.emergencyType in ['medical', 'police', 'fire']
+        && data.description is string && data.description.size() > 0
+        && data.contactNumber is string && data.contactNumber.matches('^\\+?[\\d\\s-]{10,}$')
+        && data.coordinates.lat is number
+        && data.coordinates.lng is number
+        && data.timestamp is timestamp;
+    }
+    
+    // Function to check if only status-related fields are being updated
+    function isStatusUpdate() {
+      let incomingData = request.resource.data;
+      let existingData = resource.data;
+      
+      // Allow only status and completedAt to be modified
+      let unchangedFields = existingData.keys().removeAll(['status', 'completedAt']);
+      let allUnchanged = unchangedFields.hasAll(incomingData.keys().removeAll(['status', 'completedAt'])) &&
+                         unchangedFields.size() == incomingData.keys().removeAll(['status', 'completedAt']).size();
+      
+      // Check that all values except status and completedAt are unchanged
+      return allUnchanged && 
+             incomingData.keys().hasAll(['status']) &&
+             (incomingData.status is string &&
+             incomingData.status in ['pending', 'in-progress', 'completed']);
+    }
+
+    // Allow read/write access to emergency reports with validation
+    match /emergencyReports/{reportId} {
+      allow read: if true;  // Anyone can read emergency reports
+      allow create: if isValidEmergencyReport();
+      allow update: if isStatusUpdate();  // Allow status updates
+      allow delete: if false;  // Reports cannot be deleted
+    }
+
+    // Deny access to all other collections by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
